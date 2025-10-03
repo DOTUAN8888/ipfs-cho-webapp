@@ -1,54 +1,57 @@
 import express from "express";
-import cors from "cors";
 import multer from "multer";
+import cors from "cors";
+import dotenv from "dotenv";
+import { create } from "ipfs-http-client";
 import QRCode from "qrcode";
-import axios from "axios";
-import FormData from "form-data";
-import fs from "fs";
+
+dotenv.config();
 
 const app = express();
-const upload = multer({ dest: "uploads/" });
+const PORT = process.env.PORT || 5000;
+
+// Middleware
 app.use(cors());
 app.use(express.json());
 
-// ⚡ Cấu hình API token Web3.Storage (đăng ký free: https://web3.storage/)
-const WEB3_TOKEN = "YOUR_WEB3_STORAGE_API_TOKEN";
+// Multer setup (lưu file vào bộ nhớ tạm)
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
 
+// IPFS client
+const ipfs = create({
+  host: "ipfs.infura.io",
+  port: 5001,
+  protocol: "https",
+});
+
+// API test
+app.get("/", (req, res) => {
+  res.send("✅ Backend server is running!");
+});
+
+// API upload file
 app.post("/upload", upload.single("file"), async (req, res) => {
   try {
-    const filePath = req.file.path;
-    const fileStream = fs.createReadStream(filePath);
+    if (!req.file) {
+      return res.status(400).json({ error: "No file uploaded" });
+    }
 
-    // Upload file lên Web3.Storage
-    const formData = new FormData();
-    formData.append("file", fileStream);
+    // Upload file lên IPFS
+    const added = await ipfs.add(req.file.buffer);
+    const cid = added.path;
+    const url = `https://ipfs.io/ipfs/${cid}`;
 
-    const uploadRes = await axios.post("https://api.web3.storage/upload", formData, {
-      headers: {
-        Authorization: `Bearer ${WEB3_TOKEN}`,
-        ...formData.getHeaders(),
-      },
-    });
-
-    const cid = uploadRes.data.cid;
-    const ipfsUrl = `https://ipfs.io/ipfs/${cid}`;
-
-    // Tạo QR code
-    const qrCodeData = await QRCode.toDataURL(ipfsUrl);
-
-    // Xoá file tạm
-    fs.unlinkSync(filePath);
+    // Tạo QR code từ URL
+    const qrCode = await QRCode.toDataURL(url);
 
     res.json({
       success: true,
-      ipfsUrl,
-      qrCodeData,
+      cid,
+      url,
+      qrCode, // base64 image
     });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ success: false, message: "Upload failed" });
-  }
-});
+  } catch (error) {
+    console.error("❌ Upload failed:", error);
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`🚀 Backend running on port ${PORT}`));
+   
